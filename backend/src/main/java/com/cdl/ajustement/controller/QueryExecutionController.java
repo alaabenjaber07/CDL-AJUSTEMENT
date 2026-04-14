@@ -8,7 +8,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.PostConstruct;
 import java.util.Collections;
 import java.util.Map;
 
@@ -35,13 +34,15 @@ public class QueryExecutionController {
 
     @PostMapping("/configs")
     @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public com.cdl.ajustement.entity.QueryConfig createConfig(@RequestBody com.cdl.ajustement.entity.QueryConfig config) {
+    public com.cdl.ajustement.entity.QueryConfig createConfig(
+            @RequestBody com.cdl.ajustement.entity.QueryConfig config) {
         return executionService.saveConfig(config);
     }
 
     @PutMapping("/configs/{id}")
     @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public com.cdl.ajustement.entity.QueryConfig updateConfig(@PathVariable Long id, @RequestBody com.cdl.ajustement.entity.QueryConfig config) {
+    public com.cdl.ajustement.entity.QueryConfig updateConfig(@PathVariable Long id,
+            @RequestBody com.cdl.ajustement.entity.QueryConfig config) {
         config.setId(id);
         return executionService.saveConfig(config);
     }
@@ -65,9 +66,16 @@ public class QueryExecutionController {
         return ResponseEntity.ok(Collections.singletonMap("status", "Execution started"));
     }
 
+    @PostMapping("/cancel/{configName}")
+    public ResponseEntity<Map<String, String>> cancelQuery(@PathVariable String configName) {
+        executionService.cancelExecution(configName);
+        return ResponseEntity.ok(Collections.singletonMap("status", "Execution cancelled"));
+    }
+
     @GetMapping("/progress")
-    public ResponseEntity<Map<String, Object>> getProgress() {
-        return ResponseEntity.ok(executionService.getExecutionProgress());
+    public ResponseEntity<Map<String, Object>> getProgress(
+            @RequestParam(defaultValue = "default_process") String configName) {
+        return ResponseEntity.ok(executionService.getExecutionProgress(configName));
     }
 
     @GetMapping("/extract/{configName}")
@@ -75,7 +83,8 @@ public class QueryExecutionController {
         byte[] excelBytes = executionService.extractToExcel(configName);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        headers.setContentType(
+                MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
         headers.setContentDispositionFormData("attachment", configName + "_extraction.xlsx");
         headers.setCacheControl("must-revalidate, post-check=0, pre-check=0");
 

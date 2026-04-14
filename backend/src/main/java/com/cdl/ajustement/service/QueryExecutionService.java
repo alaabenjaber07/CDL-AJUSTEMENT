@@ -30,7 +30,8 @@ public class QueryExecutionService {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private volatile String currentRunId = null;
+    private final java.util.concurrent.ConcurrentHashMap<String, String> activeRuns = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, CompletableFuture<?>> runFutures = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Executes the query asynchronously so that the client can poll for progress.
@@ -43,9 +44,9 @@ public class QueryExecutionService {
                 .getAuthentication().getName();
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
 
-        // Generate a unique ID for this specific run formatted as a timestamp that
-        // Oracle DATE can digest
-        this.currentRunId = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(now);
+        // Generate a unique ID for this specific run
+        String runId = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(now);
+        this.activeRuns.put(configName, runId);
 
         config.setExecutedBy(username);
         config.setLastExecutedAt(now);
@@ -59,16 +60,21 @@ public class QueryExecutionService {
                 .build();
         logRepository.save(executionLog);
 
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
             try {
                 ensureSuiviTraceExists();
                 String query = config.getExecutionQuery();
 
                 // Inject the currentRunId into the PL/SQL block if possible,
                 // or assume the query uses a variable we can bind.
-                // we'll replace a placeholder in the query string if it exists.
-                if (query.contains(":run_id")) {
-                    query = query.replace(":run_id", "TO_DATE('" + currentRunId + "', 'YYYY-MM-DD HH24:MI:SS')");
+                // Case-insensitive replacement of :run_id or :RUN_ID
+                String runIdMarker = ":run_id";
+                String runIdValue = "TO_DATE('" + runId + "', 'YYYY-MM-DD HH24:MI:SS')";
+
+                String queryLower = query.toLowerCase();
+                if (queryLower.contains(runIdMarker)) {
+                    // Find all occurrences and replace them regardless of case
+                    query = query.replaceAll("(?i)" + java.util.regex.Pattern.quote(runIdMarker), runIdValue);
                 }
 
                 jdbcTemplate.execute(query);
@@ -82,8 +88,13 @@ public class QueryExecutionService {
                 }
                 executionLog.setStatus("FAILED: " + errorMsg);
                 logRepository.save(executionLog);
+            } finally {
+                activeRuns.remove(configName);
+                runFutures.remove(configName);
             }
         });
+
+        runFutures.put(configName, future);
     }
 
     public List<QueryExecutionLog> getAllExecutionLogs() {
@@ -102,39 +113,65 @@ public class QueryExecutionService {
         configRepository.deleteById(id);
     }
 
-    public Map<String, Object> getExecutionProgress() {
+    public Map<String, Object> getExecutionProgress(String configName) {
         final int TOTAL_ROWS = 440;
 
         try {
             ensureSuiviTraceExists();
 
-            if (currentRunId == null) {
-                Map<String, Object> idleResponse = new java.util.HashMap<>();
-                idleResponse.put("count", 0);
-                idleResponse.put("total", TOTAL_ROWS);
-                idleResponse.put("progress", 0.0);
-                idleResponse.put("message", "Prêt...");
-                return idleResponse;
+            String runId = activeRuns.get(configName);
+
+            if (runId == null) {
+                // Check the absolute latest log for this config
+                List<QueryExecutionLog> logs = logRepository.findAllByOrderByExecutionDateDesc();
+                QueryExecutionLog latest = logs.stream()
+                        .filter(l -> l.getConfigName().equals(configName))
+                        .findFirst()
+                        .orElse(null);
+
+                if (latest != null && "STARTED".equals(latest.getStatus())) {
+                    runId = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                            .format(latest.getExecutionDate());
+                } else {
+                    // If the latest is not STARTED (e.g. CANCELLED or SUCCESS), we are idle
+                    Map<String, Object> idleResponse = new java.util.HashMap<>();
+                    idleResponse.put("count", 0);
+                    idleResponse.put("total", TOTAL_ROWS);
+                    idleResponse.put("progress", 0.0);
+                    idleResponse.put("message", "Prêt...");
+                    idleResponse.put("status", latest != null ? latest.getStatus() : "IDLE");
+                    return idleResponse;
+                }
             }
 
             Integer countNum = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM suivi_trace WHERE SITUATION = TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')",
-                    Integer.class, currentRunId);
+                    Integer.class, runId);
+
+            if (countNum == null || countNum == 0) {
+                // FALLBACK: If exact SITUATION match fails, count rows added to suivi_trace
+                // since the runId timestamp (which is the execution start time)
+                countNum = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM suivi_trace WHERE EXECUTION >= TO_TIMESTAMP(?, 'YYYY-MM-DD HH24:MI:SS')",
+                        Integer.class, runId);
+            }
 
             if (countNum == null)
                 countNum = 0;
 
             String msg = "Initialisation...";
             try {
-                msg = jdbcTemplate.queryForObject(
-                        "SELECT TYPE FROM (" +
-                                "  SELECT TYPE FROM suivi_trace " +
-                                "  WHERE SITUATION = TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS') " +
-                                "    AND TYPE IS NOT NULL " +
-                                "    AND TYPE != 'MAJ_FICTIVE_SANS_IMPACT' " +
-                                "  ORDER BY EXECUTION DESC, PROG DESC" +
-                                ") WHERE ROWNUM = 1",
-                        String.class, currentRunId);
+                // Try searching with SITUATION first, then fallback to latest overall
+                String lastMsgQuery = "SELECT TYPE FROM (" +
+                        "  SELECT TYPE FROM suivi_trace " +
+                        "  WHERE (SITUATION = TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS') " +
+                        "     OR EXECUTION >= TO_TIMESTAMP(?, 'YYYY-MM-DD HH24:MI:SS'))" +
+                        "    AND TYPE IS NOT NULL " +
+                        "    AND TYPE != 'MAJ_FICTIVE_SANS_IMPACT' " +
+                        "  ORDER BY EXECUTION DESC, PROG DESC" +
+                        ") WHERE ROWNUM = 1";
+
+                msg = jdbcTemplate.queryForObject(lastMsgQuery, String.class, runId, runId);
             } catch (org.springframework.dao.EmptyResultDataAccessException e) {
                 // Keep default message if no result
             }
@@ -146,16 +183,35 @@ public class QueryExecutionService {
             response.put("total", TOTAL_ROWS);
             response.put("progress", percent);
             response.put("message", msg);
+            response.put("runId", runId);
             return response;
 
         } catch (Exception e) {
-            e.printStackTrace(); // Log error for tracking
+            e.printStackTrace();
             Map<String, Object> errorResponse = new java.util.HashMap<>();
             errorResponse.put("count", 0);
             errorResponse.put("total", TOTAL_ROWS);
             errorResponse.put("progress", 0.0);
-            errorResponse.put("message", "En attente...");
+            errorResponse.put("message", "Erreur suivi: " + e.getMessage());
             return errorResponse;
+        }
+    }
+
+    public void cancelExecution(String configName) {
+        CompletableFuture<?> future = runFutures.get(configName);
+        if (future != null) {
+            future.cancel(true);
+            runFutures.remove(configName);
+            activeRuns.remove(configName);
+
+            // Update log
+            logRepository.findAllByOrderByExecutionDateDesc().stream()
+                    .filter(l -> l.getConfigName().equals(configName) && "STARTED".equals(l.getStatus()))
+                    .findFirst()
+                    .ifPresent(l -> {
+                        l.setStatus("CANCELLED");
+                        logRepository.save(l);
+                    });
         }
     }
 
