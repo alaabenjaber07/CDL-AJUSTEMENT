@@ -30,6 +30,10 @@ public class QueryConfig {
     @Column(name = "EXTRACTION_QUERY", nullable = false)
     private String extractionQuery;
 
+    @Lob
+    @Column(name = "EXTRACTION_QUERY_2")
+    private String extractionQuery2;
+
     @Column(name = "EXECUTED_BY")
     private String executedBy;
 

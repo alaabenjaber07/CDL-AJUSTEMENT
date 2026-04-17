@@ -3,8 +3,6 @@ package com.cdl.ajustement.controller;
 import com.cdl.ajustement.service.QueryExecutionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,7 +25,7 @@ public class QueryExecutionController {
     }
 
     @GetMapping("/configs")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'USER')")
     public java.util.List<com.cdl.ajustement.entity.QueryConfig> getAllConfigs() {
         return executionService.getAllConfigs();
     }
@@ -60,6 +58,12 @@ public class QueryExecutionController {
         return executionService.getAllExecutionLogs();
     }
 
+    @GetMapping("/extraction-logs")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    public java.util.List<com.cdl.ajustement.entity.QueryExtractionLog> getExtractionLogs() {
+        return executionService.getAllExtractionLogs();
+    }
+
     @PostMapping("/execute/{configName}")
     public ResponseEntity<Map<String, String>> executeQuery(@PathVariable String configName) {
         executionService.executeConfiguredQuery(configName);
@@ -78,16 +82,73 @@ public class QueryExecutionController {
         return ResponseEntity.ok(executionService.getExecutionProgress(configName));
     }
 
-    @GetMapping("/extract/{configName}")
-    public ResponseEntity<byte[]> extractExcel(@PathVariable String configName) {
-        byte[] excelBytes = executionService.extractToExcel(configName);
+    @PostMapping("/cancel-extraction/{configName}/{index}")
+    public ResponseEntity<Map<String, String>> cancelExtraction(
+            @PathVariable String configName,
+            @PathVariable int index) {
+        executionService.cancelExtraction(configName, index);
+        return ResponseEntity.ok(Collections.singletonMap("status", "Extraction cancelled"));
+    }
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(
-                MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
-        headers.setContentDispositionFormData("attachment", configName + "_extraction.xlsx");
-        headers.setCacheControl("must-revalidate, post-check=0, pre-check=0");
+    @PostMapping("/start-extraction/{configName}/{index}")
+    public ResponseEntity<Void> startExtraction(
+            @PathVariable String configName,
+            @PathVariable int index) {
+        String username = org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        executionService.startExtractionBackground(configName, index, username);
+        return ResponseEntity.ok().build();
+    }
 
-        return new ResponseEntity<>(excelBytes, headers, HttpStatus.OK);
+    @GetMapping("/extraction-status/{configName}/{index}")
+    public ResponseEntity<com.cdl.ajustement.entity.QueryExtractionLog> getExtractionStatus(
+            @PathVariable String configName,
+            @PathVariable int index) {
+        return ResponseEntity.ok(executionService.getExtractionStatus(configName, index));
+    }
+
+    @GetMapping("/download-extraction/{configName}/{index}")
+    public void downloadExtraction(
+            @PathVariable String configName,
+            @PathVariable int index,
+            javax.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        com.cdl.ajustement.entity.QueryExtractionLog log = executionService.getExtractionStatus(configName, index);
+        if (log == null) {
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND,
+                    "Aucun log d'extraction trouvé pour " + configName + " index " + index);
+            return;
+        }
+        if (!"SUCCESS".equals(log.getStatus())) {
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST,
+                    "L'extraction n'est pas en succès. Statut actuel: " + log.getStatus());
+            return;
+        }
+        if (log.getFilePath() == null) {
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+                    "Le chemin du fichier est manquant dans le log.");
+            return;
+        }
+
+        java.io.File file = new java.io.File(log.getFilePath());
+        if (!file.exists()) {
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND,
+                    "Fichier introuvable sur le disque");
+            return;
+        }
+
+        response.setContentType("text/csv; charset=UTF-8");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + configName + "_extraction_" + index + ".csv\"");
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "must-revalidate, post-check=0, pre-check=0");
+        response.setContentLength((int) file.length());
+
+        try (java.io.InputStream in = new java.io.FileInputStream(file);
+                java.io.OutputStream out = response.getOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = in.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
+            }
+        }
     }
 }
