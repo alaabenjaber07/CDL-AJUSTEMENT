@@ -380,6 +380,10 @@ public class QueryExecutionService {
                 .orElse(null);
     }
 
+    public QueryExtractionLog getExtractionLogById(Long id) {
+        return extractionLogRepository.findById(id).orElse(null);
+    }
+
     private void ensureSuiviTraceExists() {
         try {
             jdbcTemplate.execute("SELECT 1 FROM suivi_trace WHERE ROWNUM = 1");

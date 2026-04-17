@@ -48,15 +48,16 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
     @Override
     protected void configure(HttpSecurity http) throws Exception {
         http.cors().and().csrf().disable()
-            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
-            .authorizeRequests()
-            .antMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-            .antMatchers("/api/auth/**").permitAll()
-            .antMatchers("/api/schema/**").hasRole("ADMIN")
-            .antMatchers("/api/audit/**").hasRole("ADMIN")
-            .antMatchers("/api/dynamic/**").hasAnyRole("USER", "ADMIN")
-            .antMatchers("/api/queries/**").hasAnyRole("USER", "ADMIN")
-            .anyRequest().authenticated();
+                .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
+                .authorizeRequests()
+                .antMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                .antMatchers("/api/auth/**").permitAll()
+                .antMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
+                .antMatchers("/api/schema/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
+                .antMatchers("/api/audit/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
+                .antMatchers("/api/dynamic/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
+                .antMatchers("/api/queries/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
+                .anyRequest().authenticated();
 
         http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
     }

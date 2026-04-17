@@ -113,33 +113,48 @@ public class QueryExecutionController {
             @PathVariable int index,
             javax.servlet.http.HttpServletResponse response) throws java.io.IOException {
         com.cdl.ajustement.entity.QueryExtractionLog log = executionService.getExtractionStatus(configName, index);
+        sendFileResponse(log, configName + "_ext_" + index + ".csv", response);
+    }
+
+    @GetMapping("/download-log/{id}")
+    public void downloadLogById(
+            @PathVariable Long id,
+            javax.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        com.cdl.ajustement.entity.QueryExtractionLog log = executionService.getExtractionLogById(id);
         if (log == null) {
-            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND,
-                    "Aucun log d'extraction trouvé pour " + configName + " index " + index);
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND, "Log non trouvé");
+            return;
+        }
+        String filename = log.getConfigName() + "_ext_" + log.getExtractionIndex() + ".csv";
+        sendFileResponse(log, filename, response);
+    }
+
+    private void sendFileResponse(com.cdl.ajustement.entity.QueryExtractionLog log, String filename,
+            javax.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        if (log == null) {
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND, "Aucun log d'extraction trouvé.");
             return;
         }
         if (!"SUCCESS".equals(log.getStatus())) {
             response.sendError(javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST,
-                    "L'extraction n'est pas en succès. Statut actuel: " + log.getStatus());
+                    "Statut invalide: " + log.getStatus());
             return;
         }
         if (log.getFilePath() == null) {
             response.sendError(javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-                    "Le chemin du fichier est manquant dans le log.");
+                    "Fichier manquant dans le log.");
             return;
         }
 
         java.io.File file = new java.io.File(log.getFilePath());
         if (!file.exists()) {
-            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND,
-                    "Fichier introuvable sur le disque");
+            response.sendError(javax.servlet.http.HttpServletResponse.SC_NOT_FOUND, "Fichier physique introuvable.");
             return;
         }
 
         response.setContentType("text/csv; charset=UTF-8");
-        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + configName + "_extraction_" + index + ".csv\"");
-        response.setHeader(HttpHeaders.CACHE_CONTROL, "must-revalidate, post-check=0, pre-check=0");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "must-revalidate");
         response.setContentLength((int) file.length());
 
         try (java.io.InputStream in = new java.io.FileInputStream(file);
