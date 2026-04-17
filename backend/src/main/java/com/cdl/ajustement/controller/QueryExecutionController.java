@@ -18,27 +18,27 @@ public class QueryExecutionController {
     private QueryExecutionService executionService;
 
     @PostMapping("/reset-default")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Map<String, String>> resetDefaultConfig() {
         executionService.updateDefaultConfig();
         return ResponseEntity.ok(Collections.singletonMap("status", "Default configuration reset"));
     }
 
     @GetMapping("/configs")
-    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'USER')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'USER')")
     public java.util.List<com.cdl.ajustement.entity.QueryConfig> getAllConfigs() {
         return executionService.getAllConfigs();
     }
 
     @PostMapping("/configs")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public com.cdl.ajustement.entity.QueryConfig createConfig(
             @RequestBody com.cdl.ajustement.entity.QueryConfig config) {
         return executionService.saveConfig(config);
     }
 
     @PutMapping("/configs/{id}")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public com.cdl.ajustement.entity.QueryConfig updateConfig(@PathVariable Long id,
             @RequestBody com.cdl.ajustement.entity.QueryConfig config) {
         config.setId(id);
@@ -46,20 +46,20 @@ public class QueryExecutionController {
     }
 
     @DeleteMapping("/configs/{id}")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<Void> deleteConfig(@PathVariable Long id) {
         executionService.deleteConfig(id);
         return ResponseEntity.ok().build();
     }
 
     @GetMapping("/logs")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public java.util.List<com.cdl.ajustement.entity.QueryExecutionLog> getExecutionLogs() {
         return executionService.getAllExecutionLogs();
     }
 
     @GetMapping("/extraction-logs")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public java.util.List<com.cdl.ajustement.entity.QueryExtractionLog> getExtractionLogs() {
         return executionService.getAllExtractionLogs();
     }
